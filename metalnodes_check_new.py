@@ -10,7 +10,7 @@ from telegram import Bot
 import asyncio
 
 telegram_token = 'YOUR_NODE'
-telegram_chat_id = '-1001511639199'
+telegram_chat_id = 'YOUR_GROUP_CHAT_ID'
 
 bot = Bot(token=telegram_token)
 

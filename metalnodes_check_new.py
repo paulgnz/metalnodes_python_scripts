@@ -9,7 +9,7 @@ import time
 from telegram import Bot
 import asyncio
 
-telegram_token = '5716779327:AAF1i_9fC_9MyX1UF9uLMbOjKzDULkobvKY'
+telegram_token = 'YOUR_NODE'
 telegram_chat_id = '-1001511639199'
 
 bot = Bot(token=telegram_token)

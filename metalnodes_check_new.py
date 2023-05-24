@@ -136,11 +136,15 @@ def store_validator_data(validators):
 
 def main_loop():
     while True:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
-        json_response = response.json()
-        validators = json_response.get('result', {}).get('validators', [])
-
-        store_validator_data(validators)
+        try:
+            response = requests.post(url, headers=headers, data=json.dumps(data))
+            json_response = response.json()
+            validators = json_response.get('result', {}).get('validators', [])
+            store_validator_data(validators)
+        except (requests.exceptions.RequestException, ValueError):
+            print("Error occurred while fetching data from the Metal Blockchain API.")
+            time.sleep(60)  # Delay for 60 seconds before retrying
+            continue
 
         print("Checked for new Metal Nodes. Sleeping for 30 minutes...")
         time.sleep(1800)  # Delay for 1800 seconds (30 minutes)

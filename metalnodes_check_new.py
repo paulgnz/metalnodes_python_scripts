@@ -9,8 +9,8 @@ import time
 from telegram import Bot
 import asyncio
 
-telegram_token = 'YOUR_NODE'
-telegram_chat_id = 'YOUR_GROUP_CHAT_ID'
+telegram_token = 'YOURTOKEN'
+telegram_chat_id = 'CHATID'
 
 bot = Bot(token=telegram_token)
 
@@ -51,53 +51,62 @@ data = {
     "id":1
 }
 
-response = requests.post(url, headers=headers, data=json.dumps(data))
-
-json_response = response.json()
-
-validators = json_response.get('result', {}).get('validators', [])
-
 def create_connection():
-    conn = None;
+    conn = None
     try:
         conn = sqlite3.connect('metalnodes.db')
         return conn
     except Error as e:
         print(e)
 
+def add_last_seen_column_if_not_exists(conn):
+    cur = conn.cursor()
+
+    cur.execute("PRAGMA table_info(validators)")
+    columns = cur.fetchall()
+    column_names = [column[1] for column in columns]
+
+    if 'last_seen' not in column_names:
+        cur.execute("ALTER TABLE validators ADD COLUMN last_seen REAL")
+        conn.commit()
+
 def create_table(conn):
     try:
-        sql_create_validators_table = """ CREATE TABLE IF NOT EXISTS validators (
+        sql_create_validators_table = """CREATE TABLE IF NOT EXISTS validators (
                                             date text NOT NULL,
                                             node_id text NOT NULL,
                                             uptime real,
                                             fee real,
                                             end_time real,
                                             PRIMARY KEY (date, node_id)
-                                        ); """
+                                        );"""
         cur = conn.cursor()
         cur.execute(sql_create_validators_table)
+        add_last_seen_column_if_not_exists(conn)
     except Error as e:
         print(e)
 
 def upsert_validator_record(conn, validator):
-    sql = ''' INSERT INTO validators(date, node_id, uptime, fee, end_time)
-              VALUES(?,?,?,?,?)
+    sql = '''INSERT INTO validators(date, node_id, uptime, fee, end_time, last_seen)
+              VALUES(?,?,?,?,?,?)
               ON CONFLICT(date, node_id) DO UPDATE SET
               uptime = excluded.uptime,
               fee = excluded.fee,
-              end_time = excluded.end_time; '''
+              end_time = excluded.end_time,
+              last_seen = excluded.last_seen;'''
     cur = conn.cursor()
+    #print(f"Upserting validator: {validator}")  # Print the validator data
     cur.execute(sql, validator)
     conn.commit()
+    #print("Upserted validator")  # Print a message after the record is upserted
 
 def get_validator_record(conn, node_id):
     cur = conn.cursor()
-    cur.execute("SELECT * FROM validators WHERE node_id=?", (node_id,))
-    rows = cur.fetchall()
-    return rows
+    cur.execute("SELECT * FROM validators WHERE node_id=? ORDER BY date DESC LIMIT 1", (node_id,))
+    row = cur.fetchone()
+    return row
 
-def store_validator_data(validators):
+async def store_validator_data(validators):
     conn = create_connection()
     if conn is not None:
         create_table(conn)
@@ -107,11 +116,12 @@ def store_validator_data(validators):
             uptime = validator.get('uptime')
             fee = validator.get('delegationFee')
             end_time = int(validator.get('endTime'))  # Convert end_time to integer
+            last_seen = datetime.now().timestamp()
 
             # Check if validator already exists in the database
             existing_validator = get_validator_record(conn, node_id)
 
-            if not existing_validator:
+            if not existing_validator or (existing_validator and existing_validator[-1] is not None and (last_seen - existing_validator[-1]) > 172800):
                 # Calculate end_time in days from now
                 end_time_days = (datetime.fromtimestamp(end_time) - datetime.now()).days
 
@@ -121,32 +131,44 @@ def store_validator_data(validators):
                               f"Fee: {fee}%\n"
                               f"End Time: {end_time_days} Days\n"
                               f"\n"
-                              f"Follow @MetalNodes for more")
+                              f"Follow @MetalNodes for more! $METAL")
 
-                #Send the tweet
-                api.update_status(tweet_text)
+                try:
+                    # Send the tweet
+                    api.update_status(tweet_text)
+                    print("Tweeted about new validator node")
+                except Exception as e:
+                    print(f"Error occurred while sending tweet: {e}")
+
                 # Send the telegram message
-                asyncio.run(send_telegram_message(tweet_text))
+                try:
+                    await send_telegram_message(tweet_text)
+                except Exception as e:
+                    print(f"Error occurred while sending telegram message: {e}")
 
-
-            upsert_validator_record(conn, (date, node_id, uptime, fee, end_time))
+            # Always upsert the record, regardless of whether the validator already exists in the database
+            upsert_validator_record(conn, (date, node_id, uptime, fee, end_time, last_seen))
     else:
-        print("Error! cannot create the database connection.")
+        print("Error! Cannot create the database connection.")
 
-
-def main_loop():
+async def main_loop():
     while True:
         try:
+            print("Fetching data from the Metal Blockchain API...")  # Added print statement
             response = requests.post(url, headers=headers, data=json.dumps(data))
             json_response = response.json()
             validators = json_response.get('result', {}).get('validators', [])
-            store_validator_data(validators)
+            print(f"Found {len(validators)} validators")  # Added print statement
+            await store_validator_data(validators)
+            print("Stored validator data")  # Added print statement
         except (requests.exceptions.RequestException, ValueError):
             print("Error occurred while fetching data from the Metal Blockchain API.")
-            time.sleep(60)  # Delay for 60 seconds before retrying
+            await asyncio.sleep(60)  # Delay for 60 seconds before retrying
             continue
 
         print("Checked for new Metal Nodes. Sleeping for 30 minutes...")
-        time.sleep(1800)  # Delay for 1800 seconds (30 minutes)
+        await asyncio.sleep(1800)  # Delay for 1800 seconds (30 minutes)
 
-main_loop()
+
+if __name__ == "__main__":
+    asyncio.run(main_loop())
